@@ -6,7 +6,7 @@
 
 # <UDF name="udf_linode_password" label="A unique login password for this Linode instance, with sudo access for system management." default="" example="t0rva1d1s" />
 
-# <UDF name="udf_site_url" label="Domain name for Wordpress site." default="your-domainname.com" example="sample-site.com" />
+# <UDF name="udf_wordpress_site_url" label="Domain name for Wordpress site." default="your-domainname.com" example="sample-site.com" />
 
 # <UDF name="udf_mysql_root_password" label="MariaDB Root Password. " default="" example="" />
 
@@ -20,7 +20,7 @@ stackscript_name="wordpress-lemp"
 
 linode_username="${udf_linode_username}"
 linode_password="${udf_linode_password}"
-site_url="${udf_site_url}"
+wordpress_site_url="${udf_wordpress_site_url}"
 mysql_root_password="${udf_mysql_root_password}"
 wordpress_db_name="${udf_wordpress_db_name}"
 wordpress_db_user="${udf_wordpress_db_user}"
@@ -32,8 +32,54 @@ linode_datacenterid="${LINODE_DATACENTERID}"
 
 virtualhost_path="${virtualhost_path:-/usr/local/www}"
 log_path="${log_path:-/var/log}"
+install_log="${log_path}/${stackscript_name}-install.log"
 
-dnf_setup() {
+pkg_mgr=""
+
+logThis() {
+    printf "[%s]:\n %s\n" "$(date)" "$1"
+    return $?
+}
+
+fn_set_package_mgr() {
+
+    logThis "Setting package manager."
+    __distro=$(awk -F= '/^NAME/{print $2}' /etc/os-release) || \
+        logThis "Error. Supported distribution not found."; exit 1
+
+    case "$__distro" in
+        Ubuntu*)
+            logThis "Ubuntu detected."
+            pkg_mgr="/usr/bin/apt"
+            return $? ;;
+        Debian*)
+            logThis "Debian detected."
+            pkg_mgr="/usr/bin/apt"
+            return $? ;;
+        CentOS*)
+            logThis "CentOS detected."
+            pkg_mgr="/usr/bin/dnf"
+            return $? ;;
+        AlmaLinux*)
+            logThis "AlmaLinux detected."
+            pkg_mgr="/usr/bin/dnf"
+            return $? ;;
+        RockyLinux*)
+            logThis "Rocky Linux detected."
+            pkg_mgr="/usr/bin/dnf"
+            return $? ;;
+        FreeBSD*)
+            logThis "FreeBSD detected."
+            pkg_mgr="/usr/local/bin/pkg"
+            return $? ;;
+        *)
+            logThis "Error. Supported distribution not found."
+            exit 1 ;;
+    esac
+
+}
+
+fn_el_setup() {
     printf "%s: Updating system with DNF...\n" "$(date)"
 
     /usr/bin/dnf update -y
@@ -56,41 +102,42 @@ dnf_setup() {
     return $?
 }
 
-mysql_setup(){
+fn_mysql_setup(){
     printf "%s: Setting up mysql...\n" "$(date)"
     # Secure the mysql installation
-    mysql --user=root <<EOF
-      UPDATE mysql.user SET Password=PASSWORD('${mysql_root_password}') WHERE User='root';
-      DELETE FROM mysql.user WHERE User='';
-      DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
-      DROP DATABASE IF EXISTS test;
-      DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
-      FLUSH PRIVILEGES;
+    mysql -sfu root  << EOF
+UPDATE mysql.user SET Password=PASSWORD('${mysql_root_password}') WHERE User='root';
+DELETE FROM mysql.user WHERE User='';
+DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
+DROP DATABASE IF EXISTS test;
+DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
+FLUSH PRIVILEGES;
 EOF
+
+
     # Install the database
-    mysql --user="root" --password="${mysql_root_password}" <<EOF
-      CREATE DATABASE ${wordpress_db_name};
-      CREATE USER ${wordpress_db_user}@localhost IDENTIFIED BY '${wordpress_db_password}';
-      GRANT ALL ON ${wordpress_db_name}.* TO ${wordpress_db_user}@localhost;
-      FLUSH PRIVILEGES;
+    mysql -sfu root -p ${mysql_root_password} << EOF
+CREATE DATABASE ${wordpress_db_name};
+CREATE USER ${wordpress_db_user}@localhost IDENTIFIED BY '${wordpress_db_password}';
+GRANT ALL ON ${wordpress_db_name}.* TO ${wordpress_db_user}@localhost;
+FLUSH PRIVILEGES;
 EOF
-    nginx -t || printf "Error in nginx config."; exit 1
-    systemctl restart nginx.service
+    
     return $?
 }
 
-nginx_setup() {
+fn_nginx_setup() {
     printf "%s: Setting up nginx...\n" "$(date)"
-    if [ ! -d "$virtualhost_path/$site_url" ]; then
-        mkdir -p "$virtualhost_path/$site_url"
+    if [ ! -d "$virtualhost_path/$wordpress_site_url" ]; then
+        mkdir -p "$virtualhost_path/$wordpress_site_url"
     fi
 
-    cat << EOF > /etc/nginx/conf.d/${site_url}.conf
+    cat << EOF > /etc/nginx/conf.d/${wordpress_site_url}.conf
 server {
 listen 80;
 
-server_name ${site_url} www.${site_url};
-root ${virtualhost_path}/${site_url};
+server_name ${wordpress_site_url} www.${wordpress_site_url};
+root ${virtualhost_path}/${wordpress_site_url};
 index index.php index.html index.htm;
 
 location / {
@@ -121,10 +168,13 @@ fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
 }
 }
 EOF
+    
+    nginx -t || printf "Error in nginx config."; exit 1
+    systemctl restart nginx.service
     return $?
 }
 
-php_setup() {
+fn_php_setup() {
     printf "%s: Setting up PHP...\n" "$(date)"
 
     cp -a /etc/php.ini /etc/php-dist.ini
@@ -137,25 +187,28 @@ php_setup() {
     return $?
 }
 
-wordpress_setup() {
+fn_wordpress_setup() {
     printf "%s: Setting up Wordpress...\n" "$(date)"
     pushd /tmp
-    # wget 
+    fn_download https://wordpress.org/latest.tar.gz
+    tar -xzvf latest.tar.gz -C ${virtual_host_path}/${wordpress_site_url}
+    chown -R ${www_owner}:${www_owner} ${virtual_host_path}/${wordpress_site_url}
 }
 
-certbot_setup() {
+fn_certbot_setup() {
     printf "%s Setting up certbot...\n" "$(date)"
 }
 
-user_setup() {
+fn_user_setup() {
     printf "%s: Setting up user...\n" "$(date)"
     useradd -p ${linode_password} -m -G wheel,nginx -U ${linode_username}
     cp -a /root/.ssh /home/${linode_username}
     chmod 700 /home/${linode_username}/.ssh
     chmod 600 /home/${linode_username}/.ssh/*
+    return $?
 }
 
-post_install() {
+fn_post_install() {
     printf "%s: Finishing up...\n" "$(date)"
     
     # Edit sshd to prevent remote root access and restrict to
@@ -169,21 +222,16 @@ post_install() {
     # Edit the motd for user login
 }
 
-if [ -x /usr/bin/dnf ]; then
-    dnf_setup >> "$log_path/$stackscript_name"
-else
-    printf "Error. DNF not found." >> "$log_path/$stackscript_name"
-    exit 1
-fi
 
-touch "$log_path/$stackscript_name"
+touch "$install_log"
 
-mysql_setup >> "$log_path/$stackscript_name"
-php_setup >> "$log_path/$stackscript_name"
-nginx_setup >> "$log_path/$stackscript_name"
-wordpress_setup >> "$log_path/$stackscript_name"
-certbot_setup >> "$log_path/$stackscript_name"
-user_setup >> "$log_path/$stackscript_name"
-post_install >> "$log_path/$stackscript_name"
+fn_set_package_mgr >> "$install_log"
+fn_mysql_setup >> "$install_log"
+fn_php_setup >> "$install_log"
+fn_nginx_setup >> "$install_log"
+fn_wordpress_setup >> "$install_log"
+fn_certbot_setup >> "$install_log"
+fn_user_setup >> "$install_log"
+fn_post_install >> "$install_log"
 
 exit 0

@@ -1,0 +1,19 @@
+WWW_PATH/example-site.com
+                    |
+                    wp/ ((upstream module))
+                        |
+                        wp-admin/
+                        wp-content/
+                        wp-includes/
+                    |
+                    content/
+                    |
+                    index.php
+                    mu-plugins/
+                    plugins/
+                    themes/
+                    uploads/ ==> ../shared/content/uploads
+                    shared/
+                            |
+                            content/
+                            uploads/

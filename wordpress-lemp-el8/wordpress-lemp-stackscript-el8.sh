@@ -1,7 +1,9 @@
 #!/usr/bin/env sh
 
-## StackScript User Defined Fields
+## StackScript for installing a Wordpress LEMP stack on el8-compatible
+## distros.
 
+## StackScript User Defined Fields
 # <UDF name="udf_linode_username" label="Login username for this Linode instance, with sudo access for system management." default="" example="linus" />
 
 # <UDF name="udf_linode_password" label="A unique login password for this Linode instance, with sudo access for system management." default="" example="t0rva1d1s" />
@@ -44,42 +46,21 @@ logThis() {
 fn_set_package_mgr() {
 
     logThis "Setting package manager."
-    __distro=$(awk -F= '/^NAME/{print $2}' /etc/os-release) || \
-        logThis "Error. Supported distribution not found."; exit 1
+    if [ -r /etc/rhel-release ]; then
+        __version=$(awk -F= '/^VERSION_ID/{print $2}' /etc/os-release)
 
-    case "$__distro" in
-        Ubuntu*)
-            logThis "Ubuntu detected."
-            pkg_mgr="/usr/bin/apt"
-            return $? ;;
-        Debian*)
-            logThis "Debian detected."
-            pkg_mgr="/usr/bin/apt"
-            return $? ;;
-        CentOS*)
-            logThis "CentOS detected."
+        case "$__version" in
+        "8*")
             pkg_mgr="/usr/bin/dnf"
-            return $? ;;
-        AlmaLinux*)
-            logThis "AlmaLinux detected."
-            pkg_mgr="/usr/bin/dnf"
-            return $? ;;
-        RockyLinux*)
-            logThis "Rocky Linux detected."
-            pkg_mgr="/usr/bin/dnf"
-            return $? ;;
-        FreeBSD*)
-            logThis "FreeBSD detected."
-            pkg_mgr="/usr/local/bin/pkg"
             return $? ;;
         *)
-            logThis "Error. Supported distribution not found."
+            logThis "Error. Script supports el8.* ${__version} detected."
             exit 1 ;;
     esac
 
 }
 
-fn_el_setup() {
+fn_el8_setup() {
     printf "%s: Updating system with DNF...\n" "$(date)"
 
     /usr/bin/dnf update -y
@@ -87,18 +68,21 @@ fn_el_setup() {
     /usr/bin/firewall-cmd --permanent --add-service=http --add-service=ssh
     /usr/bin/firewall-cmd --reload
 
-    /usr/bin/dnf config-manager --set-enabled powertools
-    /usr/bin/dnf module reset php -y
-    /usr/bin/dnf module enable php:7.4 -y
-
-    /usr/bin/dnf install -y wget nginx mariadb-server php php-fpm php-mysqlnd php-opcache php-gd php-curl php-cli php-json php-xml 
-
     /usr/bin/dnf install -y epel-release
     /usr/bin/dnf update -y
     /usr/bin/dnf install -y fail2ban-all
 
+    /usr/bin/dnf config-manager --set-enabled powertools
+    /usr/bin/dnf module reset php -y
+    /usr/bin/dnf module enable php:7.4 -y
+
+    /usr/bin/dnf install -y curl nginx mariadb-server php php-fpm \
+        php-mysqlnd php-opcache php-gd php-curl php-cli php-json php-xml 
+
+
     /usr/bin/systemctl enable nginx mariadb php-fpm fail2ban
     /usr/bin/systemctl start nginx mariadb php-fpm fail2ban
+
     return $?
 }
 
@@ -116,12 +100,12 @@ EOF
 
 
     # Install the database
-    mysql -sfu root -p ${mysql_root_password} << EOF
-CREATE DATABASE ${wordpress_db_name};
-CREATE USER ${wordpress_db_user}@localhost IDENTIFIED BY '${wordpress_db_password}';
-GRANT ALL ON ${wordpress_db_name}.* TO ${wordpress_db_user}@localhost;
-FLUSH PRIVILEGES;
-EOF
+#    mysql -sfu root -p ${mysql_root_password} << EOF
+#CREATE DATABASE ${wordpress_db_name};
+#CREATE USER ${wordpress_db_user}@localhost IDENTIFIED BY '${wordpress_db_password}';
+#GRANT ALL ON ${wordpress_db_name}.* TO ${wordpress_db_user}@localhost;
+#FLUSH PRIVILEGES;
+#EOF
     
     return $?
 }
@@ -203,6 +187,7 @@ fn_user_setup() {
     printf "%s: Setting up user...\n" "$(date)"
     useradd -p ${linode_password} -m -G wheel,nginx -U ${linode_username}
     cp -a /root/.ssh /home/${linode_username}
+    chown -R /home/${linode_username}
     chmod 700 /home/${linode_username}/.ssh
     chmod 600 /home/${linode_username}/.ssh/*
     return $?
@@ -215,6 +200,7 @@ fn_post_install() {
     # SSH keys, no passwords
     sed -i -e 's/^PermitRootLogin.*/PermitRootLogin no/g' \
         -e 's/^PasswordAuthentication.*/PasswordAuthentication no/g' \
+        -e 's/^\#PubkeyAuthentication.*/PubkeyAuthentication yes/g'
         /etc/ssh/sshd_config
 
     systemctl restart sshd.service
@@ -225,12 +211,13 @@ fn_post_install() {
 
 touch "$install_log"
 
-fn_set_package_mgr >> "$install_log"
+#fn_set_package_mgr >> "$install_log"
+fn_el8_setup >> "$install_log"
 fn_mysql_setup >> "$install_log"
-fn_php_setup >> "$install_log"
-fn_nginx_setup >> "$install_log"
-fn_wordpress_setup >> "$install_log"
-fn_certbot_setup >> "$install_log"
+#fn_php_setup >> "$install_log"
+#fn_nginx_setup >> "$install_log"
+#fn_wordpress_setup >> "$install_log"
+#fn_certbot_setup >> "$install_log"
 fn_user_setup >> "$install_log"
 fn_post_install >> "$install_log"
 

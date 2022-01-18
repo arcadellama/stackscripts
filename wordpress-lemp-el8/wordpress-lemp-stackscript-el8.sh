@@ -1,21 +1,25 @@
 #!/usr/bin/env sh
 
-## StackScript for installing a Wordpress LEMP stack on el8-compatible
-## distros.
+## StackScript for installing a LEMP stack on el8-compatible distros
+## for one or more Wordpress installs. 
 
 ## StackScript User Defined Fields
-# <UDF name="udf_sudo_user" label="Login username for this Linode instance, with sudo access for system management." default="" example="linus" />
+#udf_sudo_user
+# <UDF name="udf_sudo_user" label="'sudo' user for system management. Be sure to have at least one ssh key assigned to the Linode." default="" example="" />
+# udf_sudo_user_password
+# <UDF name="udf_sudo_user_password" label="Password for sudo user." default="" example="" />
+# udf_site_urls
+# <UDF name="udf_site_urls" label="Domain name(s) separated by a single space for Wordpress site." default="" example="example.com sample-site.com yourdomain.org" />
+# udf_mysql_root_password
+# <UDF name="udf_mysql_root_password" label="MariaDB Root Password. Save and keep in a secure location. " default="" example="" />
+# udf_php_version
+# <UDF name="udf_php_version" label="Choose PHP version for Wordpress." default="" example="" oneof="7.4,8.0,8.1" />
 
-# <UDF name="udf_sudo_user_password" label="A unique login password for this Linode instance, with sudo access for system management." default="" example="t0rva1d1s" />
 
-# <UDF name="udf_site_url" label="Domain name(s) separated by a single space  for Wordpress site." default="your-domainname.com" example="sample-site.com" />
+PRGNAM="wordpress-stackscript-el"
+VERSION="0.4"
 
-# <UDF name="udf_mysql_root_password" label="MariaDB Root Password. " default="" example="" />
-
-PRGNAM="wordpress-stackscript"
-VERSION="0.3"
-
-site_url="${udf_site_url}"
+site_urls="${udf_site_urls}"
 sudo_user="${udf_sudo_user}"
 sudo_user_password="${udf_sudo_user_password}"
 
@@ -23,12 +27,10 @@ php_version="${udf_php_version}"
 
 mysql_root_password="${udf_mysql_root_password}"
 
-# TODO: perhaps just create these automatically
-# the details will be in the wp-config.php file
 
-wordpress_db_name="${udf_wordpress_db_name}"
-wordpress_db_user="${udf_wordpress_db_user}"
-wordpress_db_password="${udf_wordpress_db_password}"
+wordpress_db_name="${wordpress_db_name:-}"
+wordpress_db_user="${wordpress_db_user:-}"
+wordpress_db_password="${wordpress_db_password:-}"
 
 linode_id="${LINODE_ID}"
 linode_ram="${LINODE_RAM}"
@@ -40,6 +42,9 @@ www_group="${www_group:-nginx}"
 wwwroot_path="${wwwroot_path:-/var/www}"
 log_path="${log_path:-/var/log}"
 install_log="${log_path}/${PRGNAM}-install.log"
+
+# TODO: function to make random passwords.
+# TODO: regex or function to make site_user from site_url
 
 flog_this() {
     printf "[%s]:\n %s\n" "$(date)" "$1"
@@ -66,21 +71,39 @@ fcheck_distro() {
 }
 
 fel8_setup() {
-    printf "%s: Updating system with DNF...\n" "$(date)"
 
-    /usr/bin/dnf update -y
+    # Initial update
+    /usr/bin/dnf update -y || \
+        logThis "Error. 'dnf' not found."; exit 1
 
-    /usr/bin/firewall-cmd --permanent --add-service=http --add-service=ssh
+    # Set-up firewall
+    /usr/bin/firewall-cmd --permanent --add-service=http
     /usr/bin/firewall-cmd --reload
 
+    # Let's get fail2ban
     /usr/bin/dnf install -y epel-release
     /usr/bin/dnf update -y
     /usr/bin/dnf install -y fail2ban-all
 
+    # Enable powertools
     /usr/bin/dnf config-manager --set-enabled powertools
-    /usr/bin/dnf module reset php -y
-    /usr/bin/dnf module enable php:${php_version} -y
 
+    # Set desired php version
+    case "$php_version" in
+        8*)
+            /usr/bin/dnf install -y dnf-utils \
+                http://rpms.remirepo.net/enterprise/remi-release-8.rpm
+
+            /usr/bin/dnf module reset php -y
+            /usr/bin/dnf module enable php:remi-${php_version} -y
+            ;;
+        7.4)
+            /usr/bin/dnf module reset php -y
+            /usr/bin/dnf module enable php:${php_version} -y
+            ;;
+    esac
+
+    # Install everything
     /usr/bin/dnf install -y curl nginx mariadb-server php php-fpm \
         php-mysqlnd php-opcache php-gd php-curl php-cli php-json php-xml 
 
@@ -88,8 +111,6 @@ fel8_setup() {
     /usr/bin/systemctl enable nginx mariadb php-fpm fail2ban
     /usr/bin/systemctl start nginx mariadb php-fpm fail2ban
 
-    # TODO: conditional php version install; with extra repo
-    # TODO: check into whether to do the same with mariadb/nginx
     # TODO: wp-cli install
     # TODO: certbot install and appropriate plugin
 
@@ -110,10 +131,10 @@ EOF
 }
 
 fsite_user_setup(){
-    __site_url="$1"
+    __site_urls="$1"
     __site_user="$2"
 
-    useradd ${__site_user} -m -d ${wwwroot_path}/${__site_url} || \
+    useradd ${__site_user} -m -d ${wwwroot_path}/${__site_urls} || \
         flog_this "Error creating site user for ${__site_user}".
 
     return $?
@@ -146,34 +167,34 @@ EOF
 }
 
 fnginx_setup() {
-    # Usage: function <site_url> <site_user>
-    __site_url="$1"
+    # Usage: function <site_urls> <site_user>
+    __site_urls="$1"
     __site_user="$2"
 
     # Create paths for site
     # TODO:: is this the correct place to do this?
 
-    mkdir -p ${wwwroot_path}/${__site_url}/{public,cache,logs}
-    chown -R ${__site_user}:${__site_user} ${wwwroot_path}/${__site_url}
+    mkdir -p ${wwwroot_path}/${__site_urls}/{public,cache,logs}
+    chown -R ${__site_user}:${__site_user} ${wwwroot_path}/${__site_urls}
 
     # TODO: will certbot be able to use this conf with 443 or does it need
     # to be 80 first and certbot will do the details...
     # or I suppose I could just cert-only; in that case...
     # TODO: add letsencrypt paths here (see above)
 
-    cat << EOF > /etc/nginx/conf.d/${__site_url}.conf
-fastcgi_cache_path ${wwwroot_path}/${__site_url}/cache levels=1:2 keys_zone=${__site_url}:100m inactive=60m;
+    cat << EOF > /etc/nginx/conf.d/${__site_urls}.conf
+fastcgi_cache_path ${wwwroot_path}/${__site_urls}/cache levels=1:2 keys_zone=${__site_urls}:100m inactive=60m;
 
 server {
     listen 443 ssl http2;
 
-    server_name ${__site_url} www.${__site_url};
-    root ${wwwroot_path}/${__site_url}/public;
+    server_name ${__site_urls} www.${__site_urls};
+    root ${wwwroot_path}/${__site_urls}/public;
     index index.php;
 
     # Allow per-site logs
-    access_log ${wwwroot_path}/${__site_url}/logs/access.log;
-    error_log ${wwwroot_path}/${__site_url}/logs/error.log;
+    access_log ${wwwroot_path}/${__site_urls}/logs/access.log;
+    error_log ${wwwroot_path}/${__site_urls}/logs/error.log;
 
     # Default server block rules
     include global/server/defaults.conf;
@@ -199,7 +220,7 @@ server {
 	fastcgi_no_cache \$skip_cache;
 
 	# Define memory zone for caching. Should match key_zone in fastcgi_cache_path above.
-	fastcgi_cache ${__site_url};
+	fastcgi_cache ${__site_urls};
 
 	# Define caching time.
 	fastcgi_cache_valid 60m;
@@ -209,18 +230,18 @@ server {
 server {
 	listen 80;
 	listen [::]:80;
-	server_name ${__site_url} www.${__site_url};
+	server_name ${__site_urls} www.${__site_urls};
 
-	return 301 https://${__site_url}$request_uri;
+	return 301 https://${__site_urls}$request_uri;
 }
 
 # Redirect www to non-www
 server {
 	listen 443;
 	listen [::]:443;
-	server_name www.${__site_url};
+	server_name www.${__site_urls};
 
-	return 301 https://${__site_url}$request_uri;
+	return 301 https://${__site_urls}$request_uri;
 }
 EOF
     
@@ -230,8 +251,8 @@ EOF
 }
 
 fsetup_phpfpm() {
-    # Usage: function <site_url> <site_user>
-    __site_url="$1"
+    # Usage: function <site_urls> <site_user>
+    __site_urls="$1"
     __site_user="$2"
 
     # Update generic PHP-FPM pool with correct permissions
@@ -258,7 +279,7 @@ pm.min_spare_servers = 1
 pm.max_spare_servers = 1
 pm.max_requests = 500
 
-php_admin_value[error_log]=${wwwroot_path}/${__site_url}/logs/debug.log
+php_admin_value[error_log]=${wwwroot_path}/${__site_urls}/logs/debug.log
 EOF
 
     systemctl restart php-fpm nginx
@@ -326,7 +347,7 @@ fpost_install() {
 
 # TODO: case conditionals for passed arguments
 # TODO: loop the functions with multiple domains
-# TODO: create a function or sed that creates site_user from site_url
+# TODO: create a function or sed that creates site_user from site_urls
 
 touch "$install_log"
 

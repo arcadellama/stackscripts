@@ -53,6 +53,11 @@ flog_error() {
     return $?
 }
 
+fpassword_gen() {
+    __retval="$(curl -s 'https://www.random.org/strings/?num=1&len=16&digits=on&upperalpha=on&loweralpha=on&unique=on&format=plain&rnd=new' 2>/dev/null)"
+    prtinf "%s" "$__retval"
+}
+
 fcheck_distro() {
     if [ -r /etc/rhel-release ]; then
         __version="$(awk -F= '/^VERSION_ID/{print $2}' /etc/os-release)"
@@ -732,4 +737,3 @@ fsudo_user_setup
 fpost_install
 
 exit 0
-curl -s 'https://www.random.org/strings/?num=1&len=16&digits=on&upperalpha=on&loweralpha=on&unique=on&format=plain&rnd=new'

@@ -732,3 +732,4 @@ fsudo_user_setup
 fpost_install
 
 exit 0
+curl -s 'https://www.random.org/strings/?num=1&len=16&digits=on&upperalpha=on&loweralpha=on&unique=on&format=plain&rnd=new'

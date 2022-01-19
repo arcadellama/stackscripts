@@ -44,7 +44,12 @@ install_log="${log_path}/${PRGNAM}-install.log"
 # TODO: regex or function to make site_user from site_url
 
 flog_this() {
-    printf "[%s]:\n %s\n" "$(date)" "$1"
+    printf "[%s]\n%s\n\n" "$(date)" "$1"
+    return $?
+}
+
+flog_error() {
+    printf "\u001b[31;1m[%s]\nERROR: %s\n\n" "$(date)" "$1"
     return $?
 }
 

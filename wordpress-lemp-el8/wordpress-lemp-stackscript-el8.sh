@@ -9,7 +9,7 @@
 # udf_sudo_user_password
 # <UDF name="udf_sudo_user_password" label="Password for sudo user." default="" example="" />
 # udf_site_urls
-# <UDF name="udf_site_urls" label="Domain name(s) separated by a single space for Wordpress site." default="" example="example.com sample-site.com yourdomain.org" />
+# <UDF name="udf_site_urls" label="Domain name(s) separated by a comma for Wordpress site." default="" example="example.com, sample-site.com, yourdomain.org" />
 # udf_mysql_root_password
 # <UDF name="udf_mysql_root_password" label="MariaDB Root Password. Save and keep in a secure location. " default="" example="" />
 # udf_php_version
@@ -18,7 +18,7 @@
 # <UDF name="udf_auto_update" label="Auto update the distro?" default="" example="" oneof="Yes,No" />
 
 PRGNAM="wordpress-stackscript-el"
-VERSION="0.4"
+VERSION="0.1"
 
 site_urls="${udf_site_urls}"
 sudo_user="${udf_sudo_user}"
@@ -40,8 +40,9 @@ wp_cli="/usr/local/bin/wp"
 log_path="${log_path:-/var/log}"
 install_log="${log_path}/${PRGNAM}-install.log"
 
-
-# TODO: regex or function to make site_user from site_url
+####################
+# Useful Functions #
+####################
 
 flog_this() {
     printf "[%s]\n%s\n\n" "$(date)" "$1"
@@ -54,31 +55,33 @@ flog_error() {
 }
 
 fpassword_gen() {
-    __retval="$(curl -s 'https://www.random.org/strings/?num=1&len=16&digits=on&upperalpha=on&loweralpha=on&unique=on&format=plain&rnd=new')">/dev/null
-    case "$__retval" in
-        Error*) __retval="$(< /dev/urandom tr -dc A-Za-z0-9_ | head -c16)" ;;
+    flog_this "Generating password..."
+    __return="$(curl -s 'https://www.random.org/strings/?num=1&len=16&digits=on&upperalpha=on&loweralpha=on&unique=on&format=plain&rnd=new')">/dev/null
+    case "$__return" in
+        Error*) __return="$(< /dev/urandom tr -dc A-Za-z0-9_ | head -c16)" ;;
     esac
 
-    prtinf "%s" "$__retval"
-}
-
-fcheck_distro() {
-    if [ -r /etc/rhel-release ]; then
-        __version="$(awk -F= '/^VERSION_ID/{print $2}' /etc/os-release)"
-
-        case "$__version" in
-        "8*")
-            return 0 ;;
-        *)
-            flog_this "Error. Script supports el8.* ${__version} detected."
-            return 1 ;;
-        esac
-    fi
+    prtinf "%s" "$__return"
 }
 
 ################
 # GLOBAL SETUP #
 ################
+
+fcheck_distro() {
+    if [ -r /etc/rhel-release ]; then
+        __version="$(awk -F= '/^VERSION_ID/{print $2}' /etc/os-release)"
+        case "$__version" in
+        "8*")
+            flog_this "Confirmed EL8.*"
+            return 0 ;;
+        *)
+            flog_error "Error. Script supports el8.* ${__version} detected."
+            return 1 ;;
+        esac
+    fi
+    return 1
+}
 
 fel8_setup() {
 
@@ -101,7 +104,7 @@ fel8_setup() {
     case "$php_version" in
         8*)
             /usr/bin/dnf install -y dnf-utils \
-                http://rpms.remirepo.net/enterprise/remi-release-8.rpm
+                'http://rpms.remirepo.net/enterprise/remi-release-8.rpm'
 
             /usr/bin/dnf module reset php -y
             /usr/bin/dnf module enable php:remi-${php_version} -y
@@ -114,20 +117,21 @@ fel8_setup() {
 
     # Install everything
     /usr/bin/dnf install -y curl wget nginx mariadb-server php php-fpm \
-        php-mysqlnd php-opcache php-gd php-curl php-cli php-json php-xml 
+        php-mysqlnd php-opcache php-gd php-curl php-cli php-json php-xml \
+        || flog_error 'line 119'
 
-    /usr/bin/systemctl enable nginx mariadb php-fpm fail2ban
-    /usr/bin/systemctl start nginx mariadb php-fpm fail2ban
+    /usr/bin/systemctl enable nginx mariadb php-fpm fail2ban \
+        || flog_error 'line 121'
+    /usr/bin/systemctl start nginx mariadb php-fpm fail2ban \
+        || flog_error 'line 122'
 
     # wp-cli install
-    curl -O https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
-    chmod +x wp-cli.phar
-    mv wp-cli.phar /usr/local/bin/wp
+    curl -O 'https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar' || flog_error 'line 125'
+    chmod +x wp-cli.phar || flog_error "line 126"
+    mv wp-cli.phar /usr/local/bin/wp || flog_error "line 127"
 
-    wget https://github.com/wp-cli/wp-cli/raw/master/utils/wp-completion.bash
-    mv wp-completion.bash /etc/bash_completion.d/
-
-
+    wget 'https://github.com/wp-cli/wp-cli/raw/master/utils/wp-completion.bash' || flog_error 'line 132'
+    mv wp-completion.bash /etc/bash_completion.d/ || flog_error 'line 133'
 
     # TODO: certbot install and appropriate plugin
 
@@ -135,7 +139,6 @@ fel8_setup() {
 }
 
 ffail2ban_setup() {
-    flog_this "Setting up fail2ban..."
     cat << EOF > /etc/fail2ban/jail.d/00-sshd.conf
 [sshd]
 enabled = true
@@ -143,29 +146,28 @@ EOF
 
     # TODO: Add NGINX and maybe Wordpress specific jails
 
-    systemctl restart fail2ban
+    systemctl restart fail2ban || flog_error "line 149"
     return $?
 }
 
 fmysql_setup(){
-
     # Secure the mysql installation
-    mysql -sfu root  << EOF
+    mysql -u root  << EOF
 UPDATE mysql.user SET Password=PASSWORD('${mysql_root_password}') WHERE User='root';
 DELETE FROM mysql.user WHERE User='';
 DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
 DROP DATABASE IF EXISTS test;
-DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
+DELETE FROM mysql.db WHERE Db='test' OR Db='test\\\_%';
 FLUSH PRIVILEGES;
 EOF
-
     return $?
 }
 
 fnginx_setup() {
 
-    mv /etc/nginx.conf /etc/nginx-dist.conf
-    cat << EOF > /etc/nginx.conf
+    mv /etc/nginx/nginx.conf /etc/nginx/nginx-dist.conf || \
+        flog_error "line 168"
+    cat << EOF > /etc/nginx/nginx.conf
 # Modified by wodpress-lemp-el8 stackscript
 # For more information on configuration, see:
 #   * Official English Documentation: http://nginx.org/en/docs/
@@ -287,7 +289,7 @@ http {
 }
 EOF
 
-    cat << EOF > /etc/nginx/conf.d/gzip
+    cat << EOF > /etc/nginx/conf.d/gzip.conf
 # Enable Gzip compression.
 gzip on;
 
@@ -340,7 +342,7 @@ gzip_types
   # text/html is always compressed when enabled.
 EOF
 
-    mv /etc/nginx/default.d/php.conf /etc/nginx/default.d/php.conf.disabled
+    mv /etc/nginx/default.d/php.conf /etc/nginx/default.d/php.conf.disabled || flog_error "line 345"
 
     cat << EOF > /etc/nginx/default.d/ssl.conf
 # SSL Rules
@@ -493,13 +495,13 @@ EOF
 
     nginx -t || flog_this "Error in nginx config."
     systemctl restart nginx.service
-
+    return $?
 }
 
 
 fphp_setup() {
 
-    cp -a /etc/php.ini /etc/php-dist.ini
+    cp -a /etc/php.ini /etc/php-dist.ini || flog_error "line 594"
     sed -i -e 's/^post_max_size.*/post_max_size = 64M/g' \
         -e 's/^memory_limit.*/memory_limit = 256M/g' \
         -e 's/^max_execution_time.*/max_execution_time = 300/g' \
@@ -517,13 +519,18 @@ fsite_user_setup(){
     __site_url="$1"
     __site_user="$2"
 
-    useradd ${__site_user} -m -d ${wwwroot_dir}/${__site_url} -G ${www_group}
+    useradd ${__site_user} -m -d ${wwwroot_dir}/${__site_url} -G ${www_group} || flog_error "Line 522"
 
-    mkdir -p ${wwwroot_dir}/${__site_url}/{public,config,cache,logs}
-    mkdir -p ${wwwroot_dir}/${__site_url}/public/{core,content}
-    chown -R ${__site_user}:${__site_user} ${wwwroot_dir}/${__site_url}
-    chmod 750 ${wwwroot_dir}/${__site_url}
+    for dir in public config cache logs; do
+        mkdir -p ${wwwroot_dir}/${__site_url}/${dir} || \
+            flog_error "line 525"
+    done
+    mkdir -p ${wwwroot_dir}/${__site_url}/public/core || flog_error "528"
+    mkdir -p ${wwwroot_dir}/${__site_url}/public/content || flog_error "529"
 
+    chown -R ${__site_user}:${__site_user} ${wwwroot_dir}/${__site_url} || \
+        flor_error "531"
+    chmod 750 ${wwwroot_dir}/${__site_url} || flog_error "533"
     return $?
 }
 
@@ -608,10 +615,11 @@ fphpfpm_setup() {
     __site_user="$2"
 
     # Update generic PHP-FPM pool with correct permissions
-    cp -a /etc/php-fpm.d/www.conf /etc/php-fpm.d/www-dist.conf
+    cp -a /etc/php-fpm.d/www.conf /etc/php-fpm.d/www-dist.conf || \
+        flog_error "Line 618"
     sed -i -e "s/^user =.*/user = ${www_user}/g" \
         -e "s/^group =.*/group = ${www_group}/g" \
-        /etc/php-fpm.d/www.conf
+        /etc/php-fpm.d/www.conf || flog_error "620"
 
     # Create unique FPM pool for each site for security and good health.
     cat << EOF > /etc/php-fpm.d/${__site_user}.conf
@@ -633,6 +641,9 @@ pm.max_requests = 500
 
 php_admin_value[error_log]=${wwwroot_dir}/${__site_url}/logs/debug.log
 EOF
+    if [ $? -ne 0 ]; then
+        flog_error "Line 624"
+    fi
 
     systemctl restart php-fpm nginx
     return $?
@@ -647,27 +658,35 @@ fwordpress_setup() {
     __wordpress_db_password="$(fpassword_gen)"
 
     # Install the database
-    mysql -sfu root -p ${mysql_root_password} << EOF
-CREATE DATABASE ${wordpress_db_name};
-CREATE USER '${wordpress_db_user}'@localhost IDENTIFIED BY '${wordpress_db_password}';
-GRANT ALL PRIVILEGES ON ${wordpress_db_name}.* TO '${wordpress_db_user}'@localhost;
+    mysql -u root -p ${mysql_root_password} << EOF
+CREATE DATABASE ${__wordpress_db_name};
+CREATE USER '${__wordpress_db_user}'@localhost IDENTIFIED BY '${__wordpress_db_password}';
+GRANT ALL PRIVILEGES ON ${__wordpress_db_name}.* TO '${__wordpress_db_user}'@localhost;
 FLUSH PRIVILEGES;
 EOF
 
-    cd ${wwwroot_dir}/${__site_url}/public/core
-    $wp_cli core download
+    if [ $? -ne 0 ]; then
+        flog_error "Line 661. ${__wordpress_db_name}"
+    fi
+
+
+    cd ${wwwroot_dir}/${__site_url}/public/core || flog_error "673"
+    $wp_cli core download || flog_error "674"
     $wp_cli config create --dbname="${__wordpress_db_name}" \
                           --dbuser="${__wordpress_db_user}" \
-                          --dbpass="${__wordpress_db_password}"
-    $wp_cli db create
-    $wp_cli core install --url="${__site_url}"
+                          --dbpass="${__wordpress_db_password}" || \
+                          flog_error "675"
+    $wp_cli db create || flog_error "679"
+    $wp_cli core install --url="${__site_url}" || flog_error "680"
 
     cd ../
-    cp "${wwwroot_dir}/${__site_url}/public/core/index.php" ./index.php
-    sed -i '' -e "s/\/wp-blog-header/\/core\/wp-blog/header/g" index.php
+    cp "${wwwroot_dir}/${__site_url}/public/core/index.php" ./index.php || \
+        flog_error "683"
+    sed -i '' -e "s/\/wp-blog-header/\/core\/wp-blog/header/g" index.php \
+        || flog_error "685"
 
-    cd ${wwwroot_dir}/${__site_url}/public/core
-    $wp_cli option update siturl ${__site_url}/core
+    cd ${wwwroot_dir}/${__site_url}/public/core || flog_error "688"
+    $wp_cli option update --siteurl ${__site_url}/core || flog_error "689"
 
     return $?
 }
@@ -678,17 +697,17 @@ EOF
 
 fcertbot_setup() {
     # TODO: Add certbot instructions. 
-    flog_this "Certbot not configured."
+    flog_this "Certbot not configured. 700."
     return $?
 }
 
 fsudo_user_setup() {
 
-    useradd -p ${sudo_user_password} -m -G wheel,${www_group} -U ${sudo_user}
-    cp -a /root/.ssh /home/${sudo_user}
-    chown -R ${sudo_user}:${sudo_user} /home/${sudo_user}
-    chmod 700 /home/${sudo_user}/.ssh
-    chmod 600 /home/${sudo_user}/.ssh/*
+    useradd -p ${sudo_user_password} -m -G wheel,${www_group} -U ${sudo_user} || flog_error "706"
+    cp -a /root/.ssh /home/${sudo_user} || flog_error "707"
+    chown -R ${sudo_user}:${sudo_user} /home/${sudo_user} || flog_error "708"
+    chmod 700 /home/${sudo_user}/.ssh || flog_error "709"
+    chmod 600 /home/${sudo_user}/.ssh/* || flog_error "710"
     return $?
 
 }
@@ -698,18 +717,18 @@ fpost_install() {
     # Restrict remote ssh access to non-root users via ssh-keys
     sed -i -e 's/^PermitRootLogin.*/PermitRootLogin no/g' \
         -e 's/^PasswordAuthentication.*/PasswordAuthentication no/g' \
-        -e 's/^\#PubkeyAuthentication.*/PubkeyAuthentication yes/g'
-        /etc/ssh/sshd_config
+        -e 's/^\#PubkeyAuthentication.*/PubkeyAuthentication yes/g' \
+        /etc/ssh/sshd_config || flog_error "718"
 
     systemctl restart sshd.service
 
-    if [ "$auto_updates" = "yes" ]; then
+    if [ "$auto_update" = "yes" ]; then
         # Enable automatic updates
         dnf install -y dnf-automatic
 
         sed -i -e 's/^apply_updates.*/apply_updates = yes/g' \
             -e 's/^emit_via.*/emit_via = motd,stdio/g' \
-            /etc/dnf/automatic.conf
+            /etc/dnf/automatic.conf || flog_error "729"
 
         systemctl enable --now dnf-automatic.timer
     fi
@@ -730,31 +749,58 @@ fpost_install() {
 
 
 # global setup
-fcheck_distro >> $log_path
-fel8_setup >> $log_path
-ffail2ban_setup >> $log_path
-fmysql_setup >> $log_path
-fnginx_setup >> $log_path
-fphp_setup >> $log_path
+for __global in fcheck_distro \
+    fel8_setup \
+    ffail2ban_setup \
+    fmysql_setup \
+    fnginx_setup \
+    fphp_setup; do
 
-# site specific setup
-# set --
-# set site_url to posix array
-#while [ $# -gt 0 ]; do
-#    site="$1"
-    site="${site_urls}"
-    site_user="$(echo ${site} | sed 's/./_/g')"
+    flog_this "Checking ${__global}..."
+    if $("${__global}"); then
+        flog_this "${__global} success."
+    else
+        flog_error "${__global} failed."
+    fi
 
-    fsite_user_setup "$site" "$site_user"
-    fsite_setup "$site" "$site_user"
-    fphpfpm_setup "$site" "$site_user"
-    fwordpress_setup "$site" "$site_user"
+done || flog_error "752"
 
-#done
+# local setup
+# Create array from site_url domains
+__domains=$(echo "$site_urls" | sed -e 's/ //g') || flog_error "Line 755."
+__old_ifs="$IFS"
+IFS=,
+set -- $__domains || flog_error "773"
+while [ $# -gt 0 ]; do
+    __site="$1"
+    __user="$(echo ${__site} | sed 's/\./_/g')" || flog_error "Line 761."
+    # ^^ user is domain with '.' replaced with'_'
+    for __local in fsite_user_setup \
+        fsite_setup \
+        fphpfpm_setup \
+        fwordpress_setup; do
+            flog_this "Checking ${__global}..."
+            if $("${__local}" "${__site}" "${__user}"); then
+                flog_this "${__local} success."
+            else
+                flog_error "${__local} failed."
+            fi
+    done
+    shift
+done || flog_error "774"
+IFS="$__old_ifs"
 
- post-install cleanup
-fcertbot_setup
-fsudo_user_setup
-fpost_install
+#post-install cleanup
+for __postinstall in fcertbot_setup \
+    fsudo_user_setup \
+    fpost_install; do
 
-exit 0
+    flog_this "Checking ${__postinstall}..."
+    if $("${__postinstall}"); then
+        flog_this "${__postinstall} success."
+    else
+        flog_error "${__postinstall} failed."
+    fi
+done || flog_error "794"
+
+exit

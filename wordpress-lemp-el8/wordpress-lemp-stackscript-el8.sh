@@ -50,7 +50,7 @@ flog_this() {
 }
 
 flog_error() {
-    printf "\u001b[31;1m[%s]\nERROR: %s\n\n" "$(date)" "$1" >> "$install_log"
+    printf "\u001b[31;1m[%s]\nERROR: %s\n\n\033[m" "$(date)" "$1" >> "$install_log"
     return $?
 }
 

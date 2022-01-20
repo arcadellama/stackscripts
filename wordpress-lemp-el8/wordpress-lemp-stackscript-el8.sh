@@ -25,7 +25,7 @@ sudo_user="${udf_sudo_user}"
 sudo_user_password="${udf_sudo_user_password}"
 mysql_root_password="${udf_mysql_root_password}"
 php_version="${udf_php_version}"
-auto_update="${udf_php_version:-}"
+auto_update="${udf_auto_update}"
 
 linode_id="${LINODE_ID}"
 linode_ram="${LINODE_RAM}"
@@ -70,9 +70,9 @@ fpassword_gen() {
 
 fcheck_distro() {
     if [ -r /etc/rhel-release ]; then
-        __version="$(awk -F= '/^VERSION_ID/{print $2}' /etc/os-release)"
+        __version="$(awk -F= '/^VERSION_ID/{print $2}' /etc/os-release | tr -d '"')"
         case "$__version" in
-        "8*")
+        8*)
             flog_this "Confirmed EL8.*"
             return 0 ;;
         *)
@@ -101,8 +101,9 @@ fel8_setup() {
     /usr/bin/dnf config-manager --set-enabled powertools
 
     # Set desired php version
-    case "$php_version" in
+    case "$(echo ${php_version} | tr -d '"')" in
         8*)
+            echo "PHP version 8+ -- ${php_version}"
             /usr/bin/dnf install -y dnf-utils \
                 'http://rpms.remirepo.net/enterprise/remi-release-8.rpm'
 
@@ -110,6 +111,7 @@ fel8_setup() {
             /usr/bin/dnf module enable php:remi-${php_version} -y
             ;;
         7.4)
+            echo "PHP version 8+ -- ${php_version}"
             /usr/bin/dnf module reset php -y
             /usr/bin/dnf module enable php:${php_version} -y
             ;;
@@ -131,7 +133,7 @@ fel8_setup() {
     mv wp-cli.phar /usr/local/bin/wp || flog_error "line 127"
 
     wget 'https://github.com/wp-cli/wp-cli/raw/master/utils/wp-completion.bash' || flog_error 'line 132'
-    mv wp-completion.bash /etc/bash_completion.d/ || flog_error 'line 133'
+    mv wp-completion.bash /etc/bash_completion.d/
 
     # TODO: certbot install and appropriate plugin
 
@@ -165,7 +167,7 @@ EOF
 
 fnginx_setup() {
 
-    mv /etc/nginx/nginx.conf /etc/nginx/nginx-dist.conf || \
+    cp /etc/nginx/nginx.conf /etc/nginx/nginx-dist.conf || \
         flog_error "line 168"
     cat << EOF > /etc/nginx/nginx.conf
 # Modified by wodpress-lemp-el8 stackscript
@@ -176,8 +178,6 @@ fnginx_setup() {
 user nginx;
 worker_processes auto;
 worker_rlimit_nofile 8192;
-error_log /var/log/nginx/error.log warn;
-access_log /var/log/nginx/access.log;
 pid /run/nginx.pid;
 
 # Load dynamic modules. See /usr/share/doc/nginx/README.dynamic.
@@ -193,23 +193,12 @@ http {
                       '\$status \$body_bytes_sent "\$http_referer" '
                       '"\$http_user_agent" "\$http_x_forwarded_for"';
 
+    # Default logs
+    error_log /var/log/nginx/error.log warn;
     access_log  /var/log/nginx/access.log  main;
 
-    sendfile              on;
-    tcp_nopush            on;
-    tcp_nodelay           on;
-    send_timeout          30;
-    keepalive_timeout     15;
-    client_body_timeout   30;
-    client_header_timeout 30;
-    types_hash_max_size 2048;
-    
-    # Set the maximum allowed size of client request body. This should be set
-    # to the value of files sizes you wish to upload to the WordPress Media Library.
-    # You may also need to change the values 'upload_max_filesize' and 'post_max_size' within
-    # your php.ini for the changes to apply.
-
-    client_max_body_size 64m;
+    # HTTP
+    include /etc/nginx/conf.d/http.conf;
 
     include             /etc/nginx/mime.types;
     default_type        application/octet-stream;
@@ -222,69 +211,12 @@ http {
     # Load modular configuration files from the /etc/nginx/conf.d directory.
     # See http://nginx.org/en/docs/ngx_core_module.html#include
     # for more information.
-    include /etc/nginx/conf.d/*.conf;
+
+    # Gzip
+    include /etc/nginx/conf.d/gzip.conf;
 
     # Sites
-    include /etc/nginx/conf.d/sites/*.conf
-
-    server {
-        listen       80 default_server;
-        listen       [::]:80 default_server;
-        server_name  _;
-        root         /usr/share/nginx/html;
-
-        # Load configuration files for the default server block.
-        include /etc/nginx/default.d/*.conf;
-
-        location / {
-        }
-
-        location ~ \.php$ {
-        try_files \$uri =404;
-        fastcgi_intercept_errors on;
-        fastcgi_index  index.php;
-        include        fastcgi_params;
-        fastcgi_param  SCRIPT_FILENAME  \$document_root\$fastcgi_script_name;
-        fastcgi_pass   php-fpm;
-
-        error_page 404 /404.html;
-            location = /40x.html {
-        }
-
-        error_page 500 502 503 504 /50x.html;
-            location = /50x.html {
-        }
-    }
-
-# Settings for a TLS enabled server.
-#
-#    server {
-#        listen       443 ssl http2 default_server;
-#        listen       [::]:443 ssl http2 default_server;
-#        server_name  _;
-#        root         /usr/share/nginx/html;
-#
-#        ssl_certificate "/etc/pki/nginx/server.crt";
-#        ssl_certificate_key "/etc/pki/nginx/private/server.key";
-#        ssl_session_cache shared:SSL:1m;
-#        ssl_session_timeout  10m;
-#        ssl_ciphers PROFILE=SYSTEM;
-#        ssl_prefer_server_ciphers on;
-#
-#        # Load configuration files for the default server block.
-#        include /etc/nginx/default.d/*.conf;
-#
-#        location / {
-#        }
-#
-#        error_page 404 /404.html;
-#            location = /40x.html {
-#        }
-#
-#        error_page 500 502 503 504 /50x.html;
-#            location = /50x.html {
-#        }
-#    }
+    include /etc/nginx/conf.d/sites/*.conf;
 
 }
 EOF

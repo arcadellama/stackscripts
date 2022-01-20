@@ -33,6 +33,7 @@ linode_datacenterid="${LINODE_DATACENTERID}"
 
 www_user="${www_user:-nginx}"
 www_group="${www_group:-nginx}"
+site_group="${site_group:-www-sites}"
 
 wwwroot_dir="${wwwroot_dir:-/var/www}"
 wp_cli="/usr/local/bin/wp"
@@ -73,13 +74,14 @@ fcheck_distro() {
         __version="$(awk -F= '/^VERSION_ID/{print $2}' /etc/os-release | tr -d '"')"
         case "$__version" in
         8*)
-            flog_this "Confirmed EL8.*"
+            flog_this "EL version ${__version} confirmed and compatible."
             return 0 ;;
         *)
             flog_error "Error. Script supports el8.* ${__version} detected."
             return 1 ;;
         esac
     fi
+    flog_error "Not a compatile EL8 system."
     return 1
 }
 
@@ -103,7 +105,7 @@ fel8_setup() {
     # Set desired php version
     case "$(echo ${php_version} | tr -d '"')" in
         8*)
-            echo "PHP version 8+ -- ${php_version}"
+            flog_this "PHP version ${php_version}"
             /usr/bin/dnf install -y dnf-utils \
                 'http://rpms.remirepo.net/enterprise/remi-release-8.rpm'
 
@@ -111,29 +113,28 @@ fel8_setup() {
             /usr/bin/dnf module enable php:remi-${php_version} -y
             ;;
         7.4)
-            echo "PHP version 8+ -- ${php_version}"
+            flog_this "PHP version ${php_version}"
             /usr/bin/dnf module reset php -y
             /usr/bin/dnf module enable php:${php_version} -y
             ;;
     esac
 
     # Install everything
-    /usr/bin/dnf install -y curl wget nginx mariadb-server php php-fpm \
+    usr/bin/dnf install -y curl wget nginx mariadb-server php php-fpm \
         php-mysqlnd php-opcache php-gd php-curl php-cli php-json php-xml \
         || flog_error 'line 119'
 
-    /usr/bin/systemctl enable nginx mariadb php-fpm fail2ban \
+    /usr/bin/systemctl enable --now nginx mariadb php-fpm fail2ban \
         || flog_error 'line 121'
-    /usr/bin/systemctl start nginx mariadb php-fpm fail2ban \
-        || flog_error 'line 122'
 
     # wp-cli install
-    curl -O 'https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar' || flog_error 'line 125'
+    cd /tmp || flog_error 'line 132'
+    curl -O 'https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar' || flog_error 'line 135'
     chmod +x wp-cli.phar || flog_error "line 126"
-    mv wp-cli.phar /usr/local/bin/wp || flog_error "line 127"
+    cp wp-cli.phar /usr/local/bin/wp || flog_error "line 127"
 
     wget 'https://github.com/wp-cli/wp-cli/raw/master/utils/wp-completion.bash' || flog_error 'line 132'
-    mv wp-completion.bash /etc/bash_completion.d/
+    cp wp-completion.bash /etc/bash_completion.d/
 
     # TODO: certbot install and appropriate plugin
 
@@ -170,7 +171,7 @@ fnginx_setup() {
     cp /etc/nginx/nginx.conf /etc/nginx/nginx-dist.conf || \
         flog_error "line 168"
     cat << EOF > /etc/nginx/nginx.conf
-# Modified by wodpress-lemp-el8 stackscript
+# Modified by ${PRGNAM} stackscript
 # For more information on configuration, see:
 #   * Official English Documentation: http://nginx.org/en/docs/
 #   * Official Russian Documentation: http://nginx.org/ru/docs/
@@ -197,8 +198,13 @@ http {
     error_log /var/log/nginx/error.log warn;
     access_log  /var/log/nginx/access.log  main;
 
-    # HTTP
-    include /etc/nginx/conf.d/http.conf;
+    sendfile                on;
+    tcp_nopush              on;
+    tcp_nodelay             on;
+    keepalive_timeout       15;
+    client_body_timeout     30;
+    client_header_timeout   30;
+    send_timeout            30;
 
     include             /etc/nginx/mime.types;
     default_type        application/octet-stream;
@@ -208,12 +214,13 @@ http {
 	fastcgi_buffers 16 16k;
 	fastcgi_buffer_size 32k;
 
+    # Gzip
+    include /etc/nginx/conf.d/global/gzip.conf
+
     # Load modular configuration files from the /etc/nginx/conf.d directory.
     # See http://nginx.org/en/docs/ngx_core_module.html#include
     # for more information.
-
-    # Gzip
-    include /etc/nginx/conf.d/gzip.conf;
+    include /etc/nginx/conf.d/*.conf;
 
     # Sites
     include /etc/nginx/conf.d/sites/*.conf;
@@ -221,7 +228,8 @@ http {
 }
 EOF
 
-    cat << EOF > /etc/nginx/conf.d/gzip.conf
+    mkdir -p /etc/nginx/conf.d/global
+    cat << EOF > /etc/nginx/conf.d/global/gzip.conf
 # Enable Gzip compression.
 gzip on;
 
@@ -274,7 +282,7 @@ gzip_types
   # text/html is always compressed when enabled.
 EOF
 
-    mv /etc/nginx/default.d/php.conf /etc/nginx/default.d/php.conf.disabled || flog_error "line 345"
+    mv /etc/nginx/default.d/php.conf /etc/nginx/default.d/php.conf.old || flog_error "line 345"
 
     cat << EOF > /etc/nginx/default.d/ssl.conf
 # SSL Rules
@@ -451,7 +459,7 @@ fsite_user_setup(){
     __site_url="$1"
     __site_user="$2"
 
-    useradd ${__site_user} -m -d ${wwwroot_dir}/${__site_url} -G ${www_group} || flog_error "Line 522"
+    useradd ${__site_user} -m -d ${wwwroot_dir}/${__site_url} -G ${site_group} || flog_error "Line 522"
 
     for dir in public config cache logs; do
         mkdir -p ${wwwroot_dir}/${__site_url}/${dir} || \
@@ -484,17 +492,24 @@ fsite_setup() {
 fastcgi_cache_path ${wwwroot_dir}/${__site_url}/cache levels=1:2 keys_zone=${__site_url}:100m inactive=60m;
 
 server {
-    listen 80;
+    # Ports to liten on
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
 
-    server_name ${__site_url} www.${__site_url};
+    # Server name to listen for
+    server_name ${__site_url};
     root ${wwwroot_dir}/${__site_url}/public;
+
+    # File to be used as index
     index index.php;
 
     # Allow per-site logs
     access_log ${wwwroot_dir}/${__site_url}/logs/access.log;
     error_log ${wwwroot_dir}/${__site_url}/logs/error.log;
 
-    # Default server block rules
+    # Load configuration files for the default server block
+    # exlcusions.conf, security.conf, static-files.conf,
+    # fastcgi-cache.conf, ssl.conf
     include etc/nginx/default.d/*.conf;
 
     location / {
@@ -503,10 +518,11 @@ server {
 
     location ~ \.php$ {
     try_files \$uri =404;
+    fastcgi_intercept_errors on;
     include fastcgi_params;
-    fastcgi_pass unix:/run/php-fpm/${__site_user}.sock;
+    fastcgi_pass ${__site_user};
     
-    # Skip cache based on rules in server/fastcgi-cache.conf.
+    # Skip cache based on rules in fastcgi-cache.conf.
 	fastcgi_cache_bypass \$skip_cache;
 	fastcgi_no_cache \$skip_cache;
 
@@ -518,24 +534,24 @@ server {
     }
 
 # Redirect http to https
-#server {
-#	listen 80;
-#	listen [::]:80;
-#	server_name ${__site_url} www.${__site_url};
-#
-#	return 301 https://${__site_url}\$request_uri;
-#}
+server {
+	listen 80;
+	listen [::]:80;
+	server_name ${__site_url};
+
+	return 301 https://${__site_url}\$request_uri;
+}
 
 # Redirect www to non-www
-#server {
-#	listen 443;
-#	listen [::]:443;
-#	server_name www.${__site_url};
-#
-#	return 301 https://${__site_url}\$request_uri;
-#}
+server {
+	listen 443;
+	listen [::]:443;
+	server_name www.${__site_url};
+
+	return 301 https://${__site_url}\$request_uri;
+}
 EOF
-    
+
     nginx -t || flog_this "Error in nginx config."
     systemctl restart nginx.service
     return $?
@@ -545,6 +561,15 @@ fphpfpm_setup() {
     # Usage: function <site_urls> <site_user>
     __site_url="$1"
     __site_user="$2"
+
+    # Add upstream tag for PHP user
+    cat << EOF >> /etc/nginx/conf.d/php-fpm.conf
+
+# Added by ${PRGNAM}
+upstream ${__site_user} {
+    server unix:/run/php-fpm/${__site_user}.sock;
+}
+EOF
 
     # Update generic PHP-FPM pool with correct permissions
     cp -a /etc/php-fpm.d/www.conf /etc/php-fpm.d/www-dist.conf || \
@@ -559,7 +584,7 @@ fphpfpm_setup() {
 user = ${__site_user}
 group = ${__site_user}
 
-listen = /run/php-fpm/php${php_version}-${__site_user}.sock
+listen = /run/php-fpm/${__site_user}.sock
 listen.owner = ${__site_user}
 listen.group = ${www_group}
 listen.mode = 0660

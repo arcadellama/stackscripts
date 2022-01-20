@@ -69,9 +69,6 @@ fcheck_distro() {
             flog_this "Error. Script supports el8.* ${__version} detected."
             return 1 ;;
         esac
-    else
-        flog_this "Error. Script supports el8.* ${__version} detected."
-        return 1 ;;
     fi
 }
 
@@ -82,8 +79,7 @@ fcheck_distro() {
 fel8_setup() {
 
     # Initial update
-    /usr/bin/dnf update -y || \
-        logThis "Error. 'dnf' not found."; return 1 
+    /usr/bin/dnf update -y
 
     # Set-up firewall
     /usr/bin/firewall-cmd --permanent --add-service=http

@@ -18,7 +18,7 @@
 # <UDF name="udf_auto_update" label="Auto update the distro?" default="" example="" oneof="Yes,No" />
 
 PRGNAM="wordpress-stackscript-el"
-VERSION="0.1"
+VERSION="0.2"
 
 site_urls="${udf_site_urls}"
 sudo_user="${udf_sudo_user}"
@@ -215,7 +215,7 @@ http {
 	fastcgi_buffer_size 32k;
 
     # Gzip
-    include /etc/nginx/conf.d/global/gzip.conf
+    include /etc/nginx/conf.d/global/gzip.conf;
 
     # Load modular configuration files from the /etc/nginx/conf.d directory.
     # See http://nginx.org/en/docs/ngx_core_module.html#include
@@ -510,7 +510,7 @@ server {
     # Load configuration files for the default server block
     # exlcusions.conf, security.conf, static-files.conf,
     # fastcgi-cache.conf, ssl.conf
-    include etc/nginx/default.d/*.conf;
+    include /etc/nginx/default.d/*.conf;
 
     location / {
     try_files \$uri \$uri/ /index.php?\$args;
@@ -532,6 +532,7 @@ server {
 	# Define caching time.
 	fastcgi_cache_valid 60m;
     }
+}
 
 # Redirect http to https
 server {
@@ -582,7 +583,7 @@ EOF
     cat << EOF > /etc/php-fpm.d/${__site_user}.conf
 [${__site_user}]
 user = ${__site_user}
-group = ${__site_user}
+group = ${www_group}
 
 listen = /run/php-fpm/${__site_user}.sock
 listen.owner = ${__site_user}

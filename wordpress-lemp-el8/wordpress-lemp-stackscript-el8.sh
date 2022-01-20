@@ -17,8 +17,6 @@
 # udf_auto_update
 # <UDF name="udf_auto_update" label="Auto update the distro?" default="" example="" oneof="Yes,No" />
 
-
-
 PRGNAM="wordpress-stackscript-el"
 VERSION="0.4"
 
@@ -36,11 +34,13 @@ linode_datacenterid="${LINODE_DATACENTERID}"
 www_user="${www_user:-nginx}"
 www_group="${www_group:-nginx}"
 
-wwwroot_path="${wwwroot_path:-/var/www}"
+wwwroot_dir="${wwwroot_dir:-/var/www}"
+wp_cli="/usr/local/bin/wp"
+
 log_path="${log_path:-/var/log}"
 install_log="${log_path}/${PRGNAM}-install.log"
 
-# TODO: function to make random passwords.
+
 # TODO: regex or function to make site_user from site_url
 
 flog_this() {
@@ -54,7 +54,11 @@ flog_error() {
 }
 
 fpassword_gen() {
-    __retval="$(curl -s 'https://www.random.org/strings/?num=1&len=16&digits=on&upperalpha=on&loweralpha=on&unique=on&format=plain&rnd=new' 2>/dev/null)"
+    __retval="$(curl -s 'https://www.random.org/strings/?num=1&len=16&digits=on&upperalpha=on&loweralpha=on&unique=on&format=plain&rnd=new')">/dev/null
+    case "$__retval" in
+        Error*) __retval="$(< /dev/urandom tr -dc A-Za-z0-9_ | head -c16)" ;;
+    esac
+
     prtinf "%s" "$__retval"
 }
 
@@ -109,14 +113,22 @@ fel8_setup() {
     esac
 
     # Install everything
-    /usr/bin/dnf install -y curl nginx mariadb-server php php-fpm \
+    /usr/bin/dnf install -y curl wget nginx mariadb-server php php-fpm \
         php-mysqlnd php-opcache php-gd php-curl php-cli php-json php-xml 
-
 
     /usr/bin/systemctl enable nginx mariadb php-fpm fail2ban
     /usr/bin/systemctl start nginx mariadb php-fpm fail2ban
 
-    # TODO: wp-cli install
+    # wp-cli install
+    curl -O https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+    chmod +x wp-cli.phar
+    mv wp-cli.phar /usr/local/bin/wp
+
+    wget https://github.com/wp-cli/wp-cli/raw/master/utils/wp-completion.bash
+    mv wp-completion.bash /etc/bash_completion.d/
+
+
+
     # TODO: certbot install and appropriate plugin
 
     return $?
@@ -386,7 +398,7 @@ if (\$request_uri ~* "/wp-admin/|/wp-json/|/xmlrpc.php|wp-.*.php|/feed/|index.ph
 }
 
 # Don't use the cache for logged in users or recent commenters
-if ($http_cookie ~* "comment_author|wordpress_[a-f0-9]+|wp-postpass|wordpress_no_cache|wordpress_logged_in|edd_items_in_cart|woocommerce_items_in_cart") {
+if (\$http_cookie ~* "comment_author|wordpress_[a-f0-9]+|wp-postpass|wordpress_no_cache|wordpress_logged_in|edd_items_in_cart|woocommerce_items_in_cart") {
 	set \$skip_cache 1;
 }
 EOF
@@ -473,7 +485,7 @@ location ~* \.(?:ttf|ttc|otf|eot|woff|woff2)$ {
 
 # Don't record access/error logs for robots.txt.
 location = /robots.txt {
-	try_files $uri $uri/ /index.php?$args;
+	try_files \$uri \$uri/ /index.php?\$args;
 	access_log off;
 	log_not_found off;
 }
@@ -505,13 +517,12 @@ fsite_user_setup(){
     __site_url="$1"
     __site_user="$2"
 
-    useradd ${__site_user} -m -d ${wwwroot_path}/${__site_url} || \
-        flog_this "Error creating site user for ${__site_user}".
+    useradd ${__site_user} -m -d ${wwwroot_dir}/${__site_url} -G ${www_group}
 
-    # TODO:: is this the correct place to do this?
-    mkdir -p ${wwwroot_path}/${__site_url}/{public,cache,logs}
-    chown -R ${__site_user}:${__site_user} ${wwwroot_path}/${__site_url} || \
-         flog_this "Error chowning user home for ${__site_user}".
+    mkdir -p ${wwwroot_dir}/${__site_url}/{public,config,cache,logs}
+    mkdir -p ${wwwroot_dir}/${__site_url}/public/{core,content}
+    chown -R ${__site_user}:${__site_user} ${wwwroot_dir}/${__site_url}
+    chmod 750 ${wwwroot_dir}/${__site_url}
 
     return $?
 }
@@ -531,18 +542,18 @@ fsite_setup() {
     mkdir -p /etc/nginx/conf.d/sites
 
     cat << EOF > /etc/nginx/conf.d/sites/${__site_url}.conf
-fastcgi_cache_path ${wwwroot_path}/${__site_url}/cache levels=1:2 keys_zone=${__site_url}:100m inactive=60m;
+fastcgi_cache_path ${wwwroot_dir}/${__site_url}/cache levels=1:2 keys_zone=${__site_url}:100m inactive=60m;
 
 server {
     listen 80;
 
     server_name ${__site_url} www.${__site_url};
-    root ${wwwroot_path}/${__site_url}/public;
+    root ${wwwroot_dir}/${__site_url}/public;
     index index.php;
 
     # Allow per-site logs
-    access_log ${wwwroot_path}/${__site_url}/logs/access.log;
-    error_log ${wwwroot_path}/${__site_url}/logs/error.log;
+    access_log ${wwwroot_dir}/${__site_url}/logs/access.log;
+    error_log ${wwwroot_dir}/${__site_url}/logs/error.log;
 
     # Default server block rules
     include etc/nginx/default.d/*.conf;
@@ -620,7 +631,7 @@ pm.min_spare_servers = 1
 pm.max_spare_servers = 1
 pm.max_requests = 500
 
-php_admin_value[error_log]=${wwwroot_path}/${__site_url}/logs/debug.log
+php_admin_value[error_log]=${wwwroot_dir}/${__site_url}/logs/debug.log
 EOF
 
     systemctl restart php-fpm nginx
@@ -631,21 +642,33 @@ fwordpress_setup() {
     # Usage: function <site_urls> <site_user>
     __site_url="$1"
     __site_user="$2"
-    __wordpress_db_name="${wordpress_db_name:-}"
-    __wordpress_db_user="${wordpress_db_user:-}"
-    __wordpress_db_password="${wordpress_db_password:-}"
-
-    # TODO: Either use wp-cli for database creation or make this loopable
-    # for multiple accounts
+    __wordpress_db_name="${__site_user}"
+    __wordpress_db_user="${__site_user}"
+    __wordpress_db_password="$(fpassword_gen)"
 
     # Install the database
-#    mysql -sfu root -p ${mysql_root_password} << EOF
-#CREATE DATABASE ${wordpress_db_name};
-#CREATE USER ${wordpress_db_user}@localhost IDENTIFIED BY '${wordpress_db_password}';
-#GRANT ALL ON ${wordpress_db_name}.* TO ${wordpress_db_user}@localhost;
-#FLUSH PRIVILEGES;
-#EOF
-    
+    mysql -sfu root -p ${mysql_root_password} << EOF
+CREATE DATABASE ${wordpress_db_name};
+CREATE USER '${wordpress_db_user}'@localhost IDENTIFIED BY '${wordpress_db_password}';
+GRANT ALL PRIVILEGES ON ${wordpress_db_name}.* TO '${wordpress_db_user}'@localhost;
+FLUSH PRIVILEGES;
+EOF
+
+    cd ${wwwroot_dir}/${__site_url}/public/core
+    $wp_cli core download
+    $wp_cli config create --dbname="${__wordpress_db_name}" \
+                          --dbuser="${__wordpress_db_user}" \
+                          --dbpass="${__wordpress_db_password}"
+    $wp_cli db create
+    $wp_cli core install --url="${__site_url}"
+
+    cd ../
+    cp "${wwwroot_dir}/${__site_url}/public/core/index.php" ./index.php
+    sed -i '' -e "s/\/wp-blog-header/\/core\/wp-blog/header/g" index.php
+
+    cd ${wwwroot_dir}/${__site_url}/public/core
+    $wp_cli option update siturl ${__site_url}/core
+
     return $?
 }
 
@@ -707,27 +730,29 @@ fpost_install() {
 
 
 # global setup
-fcheck_distro || exit 1
-fel8_setup || exit 1
-ffail2ban_setup
-fmysql_setup
-fnginx_setup
-fphp_setup
+fcheck_distro >> $log_path
+fel8_setup >> $log_path
+ffail2ban_setup >> $log_path
+fmysql_setup >> $log_path
+fnginx_setup >> $log_path
+fphp_setup >> $log_path
 
 # site specific setup
 # set --
 # set site_url to posix array
-while [ $# -gt 0 ]; do
-    site="$1"
+#while [ $# -gt 0 ]; do
+#    site="$1"
+    site="${site_urls}"
     site_user="$(echo ${site} | sed 's/./_/g')"
 
-fsite_user_setup "$site" "$site_user"
-fsite_setup "$site" "$site_user"
-fphpfpm_setup "$site" "$site_user"
-fwordpress_setup "$site" "$site_user"
-done
+    fsite_user_setup "$site" "$site_user"
+    fsite_setup "$site" "$site_user"
+    fphpfpm_setup "$site" "$site_user"
+    fwordpress_setup "$site" "$site_user"
 
-# post-install cleanup
+#done
+
+ post-install cleanup
 fcertbot_setup
 fsudo_user_setup
 fpost_install

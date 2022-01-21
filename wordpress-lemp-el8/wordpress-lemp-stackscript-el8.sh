@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 
 ## StackScript for installing a LEMP stack on el8-compatible distros
-## for one or more Wordpress installs. 
+## for one or more Wordpress installs.
 
 ## StackScript User Defined Fields
 #udf_sudo_user
@@ -522,7 +522,7 @@ server {
     fastcgi_intercept_errors on;
     include fastcgi_params;
     fastcgi_pass ${__site_user};
-    
+
     # Skip cache based on rules in fastcgi-cache.conf.
 	fastcgi_cache_bypass \$skip_cache;
 	fastcgi_no_cache \$skip_cache;
@@ -655,7 +655,7 @@ EOF
 ###############
 
 fcertbot_setup() {
-    # TODO: Add certbot instructions. 
+    # TODO: Add certbot instructions.
     flog_this "Certbot not configured. 700."
     return $?
 }
@@ -666,7 +666,7 @@ fsudo_user_setup() {
 }
 
 fpost_install() {
-    
+
     # Restrict remote ssh access to non-root users via ssh-keys
     sed -i -e 's/^PermitRootLogin.*/PermitRootLogin no/g' \
         -e 's/^PasswordAuthentication.*/PasswordAuthentication no/g' \
@@ -690,7 +690,7 @@ fpost_install() {
     #       - file structure
     #       - certbot instructions
     #       - any usernames or passwords
-    #       - autoupdating 
+    #       - autoupdating
     #       - other general instructions / updating
     #       - future functionality adding additional sites
 }
@@ -719,9 +719,9 @@ for __global in fcheck_distro \
 
 done || flog_error "752"
 
-log_thiss "Finished global setup."
+log_this "Finished global setup."
 
-log_thiss "Beginning site-specific setup."
+log_this "Beginning site-specific setup."
 # local setup
 # Create array from site_url domains
 __domains=$(echo "$site_urls" | sed -e 's/ //g') || flog_error "Line 755."
@@ -746,9 +746,9 @@ while [ $# -gt 0 ]; do
     shift
 done || flog_error "774"
 IFS="$__old_ifs"
-log_thiss "Finished site-specific setup."
+log_this "Finished site-specific setup."
 
-log_thiss "Beginning post-install cleanup."
+log_this "Beginning post-install cleanup."
 #post-install cleanup
 for __postinstall in fcertbot_setup \
     fsudo_user_setup \
@@ -761,5 +761,6 @@ for __postinstall in fcertbot_setup \
         flog_error "${__postinstall} failed."
     fi
 done "
-log_thiss "Finished post-install cleanup."
+log_this "Finished post-install cleanup."
 reboot
+

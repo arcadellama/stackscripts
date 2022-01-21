@@ -80,9 +80,10 @@ fcheck_distro() {
             flog_error "Error. Script supports el8.* ${__version} detected."
             return 1 ;;
         esac
+    else
+        flog_error "Not a compatile EL8 system."
+        return 1
     fi
-    flog_error "Not a compatile EL8 system."
-    return 1
 }
 
 fel8_setup() {
@@ -661,13 +662,7 @@ fcertbot_setup() {
 
 fsudo_user_setup() {
 
-    useradd -p ${sudo_user_password} -m -G wheel,${www_group} -U ${sudo_user} || flog_error "706"
-    cp -a /root/.ssh /home/${sudo_user} || flog_error "707"
-    chown -R ${sudo_user}:${sudo_user} /home/${sudo_user} || flog_error "708"
-    chmod 700 /home/${sudo_user}/.ssh || flog_error "709"
-    chmod 600 /home/${sudo_user}/.ssh/* || flog_error "710"
-    return $?
-
+    useradd ${sudo_user} -p ${sudo_user_password} -m -G wheel,${www_group} -U
 }
 
 fpost_install() {
@@ -705,6 +700,7 @@ fpost_install() {
 # TODO: loop the functions with multiple domains
 # TODO: create a function or sed that creates site_user from site_urls
 
+flog_this "Beginning global setup."
 
 # global setup
 for __global in fcheck_distro \
@@ -723,6 +719,9 @@ for __global in fcheck_distro \
 
 done || flog_error "752"
 
+log_thiss "Finished global setup."
+
+log_thiss "Beginning site-specific setup."
 # local setup
 # Create array from site_url domains
 __domains=$(echo "$site_urls" | sed -e 's/ //g') || flog_error "Line 755."
@@ -747,7 +746,9 @@ while [ $# -gt 0 ]; do
     shift
 done || flog_error "774"
 IFS="$__old_ifs"
+log_thiss "Finished site-specific setup."
 
+log_thiss "Beginning post-install cleanup."
 #post-install cleanup
 for __postinstall in fcertbot_setup \
     fsudo_user_setup \
@@ -759,6 +760,6 @@ for __postinstall in fcertbot_setup \
     else
         flog_error "${__postinstall} failed."
     fi
-done || flog_error "794"
-
-exit
+done "
+log_thiss "Finished post-install cleanup."
+reboot

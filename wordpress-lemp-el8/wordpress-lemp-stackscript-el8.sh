@@ -17,8 +17,8 @@
 # udf_auto_update
 # <UDF name="udf_auto_update" label="Auto update the distro?" default="" example="" oneof="Yes,No" />
 
-PRGNAM="wordpress-stackscript-el"
-VERSION="0.2"
+PRGNAM="wordpress-stackscript-el8"
+VERSION="0.3"
 
 site_urls="${udf_site_urls}"
 sudo_user="${udf_sudo_user}"
@@ -460,6 +460,8 @@ fsite_user_setup(){
     __site_url="$1"
     __site_user="$2"
 
+    log_this "Setting up site user for: ${site_user}."
+
     useradd ${__site_user} -m -d ${wwwroot_dir}/${__site_url} -G ${site_group} || flog_error "Line 522"
 
     for dir in public config cache logs; do
@@ -616,6 +618,8 @@ fwordpress_setup() {
     __wordpress_db_user="${__site_user}"
     __wordpress_db_password="$(fpassword_gen)"
 
+    log_this "Setting up wordpress for site: ${__site_url}."
+
     # Install the database
     mysql -u root -p ${mysql_root_password} << EOF
 CREATE DATABASE ${__wordpress_db_name};
@@ -661,8 +665,10 @@ fcertbot_setup() {
 }
 
 fsudo_user_setup() {
-
-    useradd ${sudo_user} -p ${sudo_user_password} -m -G wheel,${www_group} -U
+    log_this "Setting up sudo user: ${sudo_user}"
+    useradd "${sudo_user}" -p "${sudo_user_password}" \
+        -m -G "wheel,${www_group}" -U
+    return $?
 }
 
 fpost_install() {
@@ -700,6 +706,7 @@ fpost_install() {
 # TODO: loop the functions with multiple domains
 # TODO: create a function or sed that creates site_user from site_urls
 
+main() {
 flog_this "Beginning global setup."
 
 # global setup
@@ -711,7 +718,7 @@ for __global in fcheck_distro \
     fphp_setup; do
 
     flog_this "Checking ${__global}..."
-    if $("${__global}"); then
+    if "${__global}"; then
         flog_this "${__global} success."
     else
         flog_error "${__global} failed."
@@ -719,9 +726,9 @@ for __global in fcheck_distro \
 
 done || flog_error "752"
 
-log_thiss "Finished global setup."
+log_this "Finished global setup."
 
-log_thiss "Beginning site-specific setup."
+log_this "Beginning site-specific setup."
 # local setup
 # Create array from site_url domains
 __domains=$(echo "$site_urls" | sed -e 's/ //g') || flog_error "Line 755."
@@ -731,13 +738,15 @@ set -- $__domains || flog_error "773"
 while [ $# -gt 0 ]; do
     __site="$1"
     __user="$(echo ${__site} | sed 's/\./_/g')" || flog_error "Line 761."
-    # ^^ user is domain with '.' replaced with'_'
+
     for __local in fsite_user_setup \
         fsite_setup \
         fphpfpm_setup \
         fwordpress_setup; do
+
             flog_this "Checking ${__global}..."
-            if $("${__local}" "${__site}" "${__user}"); then
+
+            if "${__local}" "${__site}" "${__user}"; then
                 flog_this "${__local} success."
             else
                 flog_error "${__local} failed."
@@ -746,20 +755,23 @@ while [ $# -gt 0 ]; do
     shift
 done || flog_error "774"
 IFS="$__old_ifs"
-log_thiss "Finished site-specific setup."
+log_this "Finished site-specific setup."
 
-log_thiss "Beginning post-install cleanup."
+log_this "Beginning post-install cleanup."
 #post-install cleanup
 for __postinstall in fcertbot_setup \
     fsudo_user_setup \
     fpost_install; do
 
     flog_this "Checking ${__postinstall}..."
-    if $("${__postinstall}"); then
+    if "${__postinstall}"; then
         flog_this "${__postinstall} success."
     else
         flog_error "${__postinstall} failed."
     fi
-done "
-log_thiss "Finished post-install cleanup."
+done 
+log_this "Finished post-install cleanup."
 reboot
+}
+
+main >> "$install_log"

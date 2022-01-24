@@ -18,7 +18,7 @@
 # <UDF name="AUTO_UPDATE" label="Auto update the distro?" default="Yes" example="" oneof="Yes,No" />
 
 PRGNAM="wordpress-stackscript-el8"
-VERSION="0.5"
+VERSION="0.6"
 
 SITE_URLS="$SITE_URLS"
 SUDO_USER="$SUDO_USER"

@@ -4,54 +4,54 @@
 ## for one or more Wordpress installs.
 
 ## StackScript User Defined Fields
-#udf_sudo_user
-# <UDF name="udf_sudo_user" label="'sudo' user for system management. Be sure to have at least one ssh key assigned to the Linode." default="" example="" />
-# udf_sudo_user_password
-# <UDF name="udf_sudo_user_password" label="Password for sudo user." default="" example="" />
-# udf_site_urls
-# <UDF name="udf_site_urls" label="Domain name(s) separated by a comma for Wordpress site." default="" example="example.com, sample-site.com, yourdomain.org" />
-# udf_mysql_root_password
-# <UDF name="udf_mysql_root_password" label="MariaDB Root Password. Save and keep in a secure location. " default="" example="" />
-# udf_php_version
-# <UDF name="udf_php_version" label="Choose PHP version for Wordpress." default="" example="" oneof="7.4,8.0,8.1" />
-# udf_auto_update
-# <UDF name="udf_auto_update" label="Auto update the distro?" default="" example="" oneof="Yes,No" />
+#SUDO_USER
+# <UDF name="SUDO_USER" label="'sudo' user for system management. You need at least one ssh key assigned to the Linode."/>
+# SUDO_USER_PASSWORD
+# <UDF name="SUDO_USER_PASSWORD" label="Password for sudo user."/>
+# SITE_URLS
+# <UDF name="SITE_URLS" label="Domain name(s) separated by a comma for Wordpress site." example="example.com, sample-site.com, yourdomain.org" />
+# MYSQL_ROOT_PASSWORD
+# <UDF name="MYSQL_ROOT_PASSWORD" label="MariaDB Root Password. Save and keep in a secure location." />
+# PHP_VERSION
+# <UDF name="PHP_VERSION" label="Choose PHP version for Wordpress." default="7.4" oneof="7.4,8.0,8.1" />
+# AUTO_UPDATE
+# <UDF name="AUTO_UPDATE" label="Auto update the distro?" default="Yes" example="" oneof="Yes,No" />
 
 PRGNAM="wordpress-stackscript-el8"
 VERSION="0.5"
 
-site_urls="$UDF_SITE_URLS"
-sudo_user="$UDF_SUDO_USER"
-sudo_user_password="$UDF_SUDO_USER_PASSWORD"
-mysql_root_password="$UDF_MYSQL_ROOT_PASSWORD"
-php_version="$UDF_PHP_VERSION"
-auto_update="$UDF_AUTO_UPDATE"
+SITE_URLS="$SITE_URLS"
+SUDO_USER="$SUDO_USER"
+SUDO_USER_PASSWORD="$SUDO_USER_PASSWORD"
+MYSQL_ROOT_PASSWORD="$MYSQL_ROOT_PASSWORD"
+PHP_VERSION="${PHP_VERSION:-7.4}"
+AUTO_UPDATE="${AUTO_UPDATE:-Yes}"
 
-linode_id="${LINODE_ID}"
-linode_ram="${LINODE_RAM}"
-linode_datacenterid="${LINODE_DATACENTERID}"
+LINODE_ID="$LINODE_ID"
+LINODE_RAM="$LINODE_RAM"
+LINODE_DATACENTERID="$LINODE_DATACENTERID"
 
-www_user="${www_user:-nginx}"
-www_group="${www_group:-nginx}"
-site_group="${site_group:-www-sites}"
+WWW_USER="${WWW_USER:-nginx}"
+WWW_GROUP="${WWW_GROUP:-nginx}"
+SITE_GROUP="${SITE_GROUP:-www-sites}"
 
-wwwroot_dir="${wwwroot_dir:-/var/www}"
-wp_cli="/usr/local/bin/wp"
+WWWROOT_DIR="${WWWROOT_DIR:-/var/www}"
+WP_CLI="/usr/local/bin/wp"
 
-log_path="${log_path:-/var/log}"
-install_log="${log_path}/${PRGNAM}-install.log"
+LOG_PATH="${LOG_PATH:-/var/log}"
+INSTALL_LOG="${LOG_PATH}/${PRGNAM}-install.log"
 
 ####################
 # Useful Functions #
 ####################
 
 flog_this() {
-    printf "[%s]\n%s\n\n" "$(date)" "$1" >> "$install_log"
+    printf "[%s]\n%s\n\n" "$(date)" "$1" >> "$INSTALL_LOG"
     return $?
 }
 
 flog_error() {
-    printf "\u001b[31;1m[%s]\nERROR: %s\n\n\033[m" "$(date)" "$1" >> "$install_log"
+    printf "\u001b[31;1m[%s]\nERROR: %s\n\n\033[m" "$(date)" "$1" >> "$INSTALL_LOG"
     return $?
 }
 
@@ -104,19 +104,19 @@ fel8_setup() {
     /usr/bin/dnf config-manager --set-enabled powertools
 
     # Set desired php version
-    case "$(echo ${php_version} | tr -d '"')" in
+    case "$(echo ${PHP_VERSION} | tr -d '"')" in
         8*)
-            flog_this "PHP version ${php_version}"
+            flog_this "PHP version ${PHP_VERSION}"
             /usr/bin/dnf install -y dnf-utils \
                 'http://rpms.remirepo.net/enterprise/remi-release-8.rpm'
 
             /usr/bin/dnf module reset php -y
-            /usr/bin/dnf module enable php:remi-${php_version} -y
+            /usr/bin/dnf module enable php:remi-${PHP_VERSION} -y
             ;;
         7.4)
-            flog_this "PHP version ${php_version}"
+            flog_this "PHP version ${PHP_VERSION}"
             /usr/bin/dnf module reset php -y
-            /usr/bin/dnf module enable php:${php_version} -y
+            /usr/bin/dnf module enable php:${PHP_VERSION} -y
             ;;
     esac
 
@@ -160,7 +160,7 @@ EOF
 fmysql_setup(){
     # Secure the mysql installation
     mysql -u root  << EOF
-UPDATE mysql.user SET Password=PASSWORD('${mysql_root_password}') WHERE User='root';
+UPDATE mysql.user SET Password=PASSWORD('${MYSQL_ROOT_PASSWORD}') WHERE User='root';
 DELETE FROM mysql.user WHERE User='';
 DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
 DROP DATABASE IF EXISTS test;
@@ -465,23 +465,23 @@ fsite_user_setup(){
 
     flog_this "Setting up site user for: "${__site_user}"."
 
-    useradd "${__site_user}" -m -d "${wwwroot_dir}"/"${__site_url}" -G "${site_group}" -U || flog_error "Line 522 ; User "${__user}", homedir "${wwwroot_dir}"/"${__site_url}" sitegroup "${site_group}""
+    useradd "${__site_user}" -m -d "${WWWROOT_DIR}"/"${__site_url}" -G "${SITE_GROUP}" -U || flog_error "Line 522 ; User "${__user}", homedir "${WWWROOT_DIR}"/"${__site_url}" sitegroup "${SITE_GROUP}""
 
     for dir in public config cache logs; do
-        mkdir -p "${wwwroot_dir}"/"${__site_url}"/"${dir}" || \
+        mkdir -p "${WWWROOT_DIR}"/"${__site_url}"/"${dir}" || \
             flog_error "line 525"
     done
-    mkdir -p "${wwwroot_dir}"/"${__site_url}"/public/core || flog_error "528"
-    mkdir -p "${wwwroot_dir}"/"${__site_url}"/public/content || flog_error "529"
+    mkdir -p "${WWWROOT_DIR}"/"${__site_url}"/public/core || flog_error "528"
+    mkdir -p "${WWWROOT_DIR}"/"${__site_url}"/public/content || flog_error "529"
 
-    chown -R "${__site_user}":"${__site_user}" "${wwwroot_dir}"/"${__site_url}" || \
+    chown -R "${__site_user}":"${__site_user}" "${WWWROOT_DIR}"/"${__site_url}" || \
         flor_error "531"
-    chmod 750 "${wwwroot_dir}"/"${__site_url}" || flog_error "533"
+    chmod 750 "${WWWROOT_DIR}"/"${__site_url}" || flog_error "533"
     return $?
 }
 
 fsite_setup() {
-    # Usage: function <site_urls> <site_user>
+    # Usage: function <SITE_URLS> <site_user>
     __site_url="$1"
     __site_user="$2"
 
@@ -495,7 +495,7 @@ fsite_setup() {
     mkdir -p /etc/nginx/conf.d/sites
 
     cat << EOF > /etc/nginx/conf.d/sites/"${__site_url}".conf
-fastcgi_cache_path ${wwwroot_dir}/${__site_url}/cache levels=1:2 keys_zone=${__site_url}:100m inactive=60m;
+fastcgi_cache_path ${WWWROOT_DIR}/${__site_url}/cache levels=1:2 keys_zone=${__site_url}:100m inactive=60m;
 
 server {
     # Ports to liten on
@@ -504,14 +504,14 @@ server {
 
     # Server name to listen for
     server_name ${__site_url};
-    root ${wwwroot_dir}/${__site_url}/public;
+    root ${WWWROOT_DIR}/${__site_url}/public;
 
     # File to be used as index
     index index.php;
 
     # Allow per-site logs
-    access_log ${wwwroot_dir}/${__site_url}/logs/access.log;
-    error_log ${wwwroot_dir}/${__site_url}/logs/error.log;
+    access_log ${WWWROOT_DIR}/${__site_url}/logs/access.log;
+    error_log ${WWWROOT_DIR}/${__site_url}/logs/error.log;
 
     # Load configuration files for the default server block
     # exlcusions.conf, security.conf, static-files.conf,
@@ -565,7 +565,7 @@ EOF
 }
 
 fphpfpm_setup() {
-    # Usage: function <site_urls> <site_user>
+    # Usage: function <SITE_URLS> <site_user>
     __site_url="$1"
     __site_user="$2"
 
@@ -581,19 +581,19 @@ EOF
     # Update generic PHP-FPM pool with correct permissions
     cp -a /etc/php-fpm.d/www.conf /etc/php-fpm.d/www-dist.conf || \
         flog_error "Line 618"
-    sed -i -e "s/^user =.*/user = ${www_user}/g" \
-        -e "s/^group =.*/group = ${www_group}/g" \
+    sed -i -e "s/^user =.*/user = ${WWW_USER}/g" \
+        -e "s/^group =.*/group = ${WWW_GROUP}/g" \
         /etc/php-fpm.d/www.conf || flog_error "620"
 
     # Create unique FPM pool for each site for security and good health.
     cat << EOF > /etc/php-fpm.d/${__site_user}.conf
 [${__site_user}]
 user = ${__site_user}
-group = ${www_group}
+group = ${WWW_GROUP}
 
 listen = /run/php-fpm/${__site_user}.sock
 listen.owner = ${__site_user}
-listen.group = ${www_group}
+listen.group = ${WWW_GROUP}
 listen.mode = 0660
 
 pm = dynamic
@@ -603,7 +603,7 @@ pm.min_spare_servers = 1
 pm.max_spare_servers = 1
 pm.max_requests = 500
 
-php_admin_value[error_log]=${wwwroot_dir}/${__site_url}/logs/debug.log
+php_admin_value[error_log]=${WWWROOT_DIR}/${__site_url}/logs/debug.log
 EOF
     if [ $? -ne 0 ]; then
         flog_error "Line 624"
@@ -614,17 +614,21 @@ EOF
 }
 
 fwordpress_setup() {
-    # Usage: function <site_urls> <site_user>
+    # Usage: function <SITE_URLS> <site_user>
     __site_url="$1"
     __site_user="$2"
     __wordpress_db_name="${__site_user}"
     __wordpress_db_user="${__site_user}"
     __wordpress_db_password="$(fpassword_gen)"
+    printf "WP_DB_NAME = %s\nWP_DB_USER = %s\nWP_DB_PASSWORD = %s\n" \
+        "$__wordpress_db_name" \
+        "$__wordpress_db_user" \
+        "$__wordpress_db_password"
 
     flog_this "Setting up wordpress for site: ${__site_url}."
 
     # Install the database
-    mysql -u root -p"${mysql_root_password}" << EOF
+    mysql -u root -p"${MYSQL_ROOT_PASSWORD}" << EOF
 CREATE DATABASE ${__wordpress_db_name};
 CREATE USER '${__wordpress_db_user}'@localhost IDENTIFIED BY '${__wordpress_db_password}';
 GRANT ALL PRIVILEGES ON ${__wordpress_db_name}.* TO '${__wordpress_db_user}'@localhost;
@@ -636,22 +640,22 @@ EOF
     fi
 
 
-    #cd ${wwwroot_dir}/${__site_url}/public/core || flog_error "673"
-    #$wp_cli core download || flog_error "674"
-    #$wp_cli config create --dbname="${__wordpress_db_name}" \
+    #cd ${WWWROOT_DIR}/${__site_url}/public/core || flog_error "673"
+    #$WP_CLI core download || flog_error "674"
+    #$WP_CLI config create --dbname="${__wordpress_db_name}" \
     #                      --dbuser="${__wordpress_db_user}" \
     #                      --dbpass="${__wordpress_db_password}" || \
     #                      flog_error "675"
-    #$wp_cli core install --url="${__site_url}" || flog_error "680"
+    #$WP_CLI core install --url="${__site_url}" || flog_error "680"
 
     #cd ../
-    #cp "${wwwroot_dir}/${__site_url}/public/core/index.php" ./index.php || \
+    #cp "${WWWROOT_DIR}/${__site_url}/public/core/index.php" ./index.php || \
     #    flog_error "683"
     #sed -i -e "s/\/wp-blog-header/\/core\/wp-blog/header/g" index.php \
     #    || flog_error "685"
 
-    #cd ${wwwroot_dir}/${__site_url}/public/core || flog_error "688"
-    #$wp_cli option update --siteurl ${__site_url}/core || flog_error "689"
+    #cd ${WWWROOT_DIR}/${__site_url}/public/core || flog_error "688"
+    #$WP_CLI option update --siteurl ${__site_url}/core || flog_error "689"
 
     return $?
 }
@@ -667,9 +671,9 @@ fcertbot_setup() {
 }
 
 fsudo_user_setup() {
-    flog_this "Setting up sudo user: ${sudo_user}"
-    useradd "${sudo_user}" -p "${sudo_user_password}" \
-        -m -G "wheel,${www_group}" -U
+    flog_this "Setting up sudo user: ${SUDO_USER}"
+    useradd "${SUDO_USER}" -p "${SUDO_USER_PASSWORD}" \
+        -m -G "wheel,${WWW_GROUP}" -U
     return $?
 }
 
@@ -683,7 +687,7 @@ fpost_install() {
 
     systemctl restart sshd.service
 
-    if [ "$auto_update" = "yes" ]; then
+    if [ "$AUTO_UPDATE" = "yes" ]; then
         # Enable automatic updates
         dnf install -y dnf-automatic
 
@@ -706,24 +710,24 @@ fpost_install() {
 
 # TODO: case conditionals for passed arguments
 # TODO: loop the functions with multiple domains
-# TODO: create a function or sed that creates site_user from site_urls
+# TODO: create a function or sed that creates site_user from SITE_URLS
 
-flog_this "$site_urls"
-flog_this "$sudo_user"
-flog_this "$sudo_user_password"
-flog_this "$mysql_root_password"
-flog_this "$php_version"
-flog_this "$auto_update"
+flog_this "$SITE_URLS"
+flog_this "$SUDO_USER"
+flog_this "$SUDO_USER_PASSWORD"
+flog_this "$MYSQL_ROOT_PASSWORD"
+flog_this "$PHP_VERSION"
+flog_this "$AUTO_UPDATE"
 
-flog_this "$www_user"
-flog_this "$www_group"
-flog_this "$site_group"
+flog_this "$WWW_USER"
+flog_this "$WWW_GROUP"
+flog_this "$SITE_GROUP"
 
-flog_this "$wwwroot_dir"
-flog_this "$wp_cli"
+flog_this "$WWWROOT_DIR"
+flog_this "$WP_CLI"
 
-flog_this "$log_path"
-flog_this "$install_log"
+flog_this "$LOG_PATH"
+flog_this "$INSTALL_LOG"
 
 main() {
 flog_this "Beginning global setup."
@@ -751,7 +755,7 @@ flog_this "Finished global setup."
 flog_this "Beginning site-specific setup."
 # local setup
 # Create array from site_url domains
-__domains=$(echo "$site_urls" | sed -e 's/ //g') || flog_error "Line 755."
+__domains=$(echo "$SITE_URLS" | sed -e 's/ //g') || flog_error "Line 755."
 __old_ifs="$IFS"
 IFS=,
 set -- $__domains || flog_error "773"
@@ -795,4 +799,4 @@ flog_this "Finished post-install cleanup."
 reboot
 }
 
-main >> "$install_log"
+main >> "$INSTALL_LOG"
